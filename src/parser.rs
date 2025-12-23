@@ -3,6 +3,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env::var;
 use std::fmt::Formatter;
+use std::num::{ParseFloatError, ParseIntError};
+use std::str::ParseBoolError;
 
 use pest::iterators::Pair;
 use pest::Parser;
@@ -317,14 +319,48 @@ impl<'a> CornParser<'a> {
         Ok(())
     }
 
+    fn attempt_coerce(&self, var: String, default: &Value<'a>) -> Result<Value<'a>> {
+        let parsed = match default {
+            Value::Integer(_) => {
+                let val: i64 = var.parse()
+                    .map_err(|e: ParseIntError| Error::DeserializationError(e.to_string()))?;
+                Value::Integer(val)
+            },
+            Value::Float(_) => {
+                let val: f64 = var.parse()
+                    .map_err(|e: ParseFloatError| Error::DeserializationError(e.to_string()))?;
+                Value::Float(val)
+            },
+            Value::Boolean(_) => {
+                let val: bool = var.parse()
+                    .map_err(|e: ParseBoolError| Error::DeserializationError(e.to_string()))?;
+                Value::Boolean(val)
+            },
+            Value::Null(_) => {
+                if var == "null" {
+                    Value::Null(Some(()))
+                } else {
+                    Value::Null(None)
+                }
+            },
+            _ => Value::String(Cow::Owned(var))
+        };
+        Ok(parsed)
+    }
+
     /// Attempts to get an input value from the `inputs` map.
     /// If the `key` starts with `$env_` the system environment variables will be consulted first.
     fn get_input(&self, key: &'a str) -> Result<Value<'a>> {
         if let Some(env_name) = key.strip_prefix("$env_") {
             let var = var(env_name);
 
+
             if let Ok(var) = var {
-                return Ok(Value::String(Cow::Owned(var)));
+                if let Some(default) = self.inputs.get(key) {
+                    return self.attempt_coerce(var, default);
+                } else {
+                    return Ok(Value::String(Cow::Owned(var)));
+                }
             }
         }
 
